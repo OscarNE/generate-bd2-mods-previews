@@ -35,6 +35,7 @@ You can either point the tool at a folder that contains the `.atlas`, `.skel/.js
 - `--time <seconds>`: Start time offset inside the animation.
 - `--width` / `--height`: Force the output image size (pixels).
 - `--video-seconds <seconds>` and `--fps <int>`: Enable MP4 export and control duration/fps.
+- `--video-loop auto|off|N`: Loop-aware video length. `auto` captures one perfect cycle, `N` captures N full cycles, `off` (default) uses `--video-seconds`.
 - `--video-output <file>`: Destination MP4 path (defaults to the PNG name with `.mp4`).
 - `--keep-frames`: Keep intermediate PNG frames when rendering video.
 

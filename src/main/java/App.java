@@ -47,23 +47,28 @@ public class App extends ApplicationAdapter {
     private static final Method UPDATE_WORLD_TRANSFORM_WITH_PHYSICS;
     private static final Method UPDATE_WORLD_TRANSFORM_NO_ARGS;
     private static final Object PHYSICS_UPDATE_ENUM;
+    private static final Object PHYSICS_NONE_ENUM;
     private static final Method SKELETON_UPDATE_METHOD;
 
     static {
         Method worldTransformMethod = null;
         Method worldTransformNoArgs = null;
         Object physicsUpdateEnum = null;
+        Object physicsNoneEnum = null;
         try {
             Class<?> physicsClass = Class.forName(
                 "com.esotericsoftware.spine.Skeleton$Physics"
             );
             @SuppressWarnings("unchecked")
             Enum<?> update = Enum.valueOf((Class<Enum>) physicsClass, "Update");
+            @SuppressWarnings("unchecked")
+            Enum<?> none = Enum.valueOf((Class<Enum>) physicsClass, "None");
             worldTransformMethod = Skeleton.class.getMethod(
                 "updateWorldTransform",
                 physicsClass
             );
             physicsUpdateEnum = update;
+            physicsNoneEnum = none;
         } catch (
             ClassNotFoundException
             | NoSuchMethodException
@@ -71,6 +76,7 @@ public class App extends ApplicationAdapter {
         ) {
             worldTransformMethod = null;
             physicsUpdateEnum = null;
+            physicsNoneEnum = null;
         }
 
         try {
@@ -91,6 +97,7 @@ public class App extends ApplicationAdapter {
         UPDATE_WORLD_TRANSFORM_WITH_PHYSICS = worldTransformMethod;
         UPDATE_WORLD_TRANSFORM_NO_ARGS = worldTransformNoArgs;
         PHYSICS_UPDATE_ENUM = physicsUpdateEnum;
+        PHYSICS_NONE_ENUM = physicsNoneEnum;
         SKELETON_UPDATE_METHOD = updateMethod;
     }
 
@@ -255,7 +262,7 @@ public class App extends ApplicationAdapter {
             true
         );
 
-        if (arguments.videoSeconds() > 0f) {
+        if (arguments.shouldRenderVideo()) {
             renderVideoSequence();
         } else {
             renderStillFrame(arguments.outputPath());
@@ -292,19 +299,75 @@ public class App extends ApplicationAdapter {
     }
 
     private void renderVideoSequence() {
-        int frames = Math.max(
-            1,
-            Math.round(arguments.videoSeconds() * arguments.fps())
-        );
-        float step = 1f / arguments.fps();
+        int fps = arguments.fps();
+        if (fps <= 0) {
+            throw new IllegalArgumentException(
+                "FPS must be greater than zero."
+            );
+        }
+
+        float loopSeconds = 0f;
+        if (arguments.videoLoopMode() != CliArguments.LoopMode.OFF) {
+            if (animationState == null) {
+                throw new IllegalStateException(
+                    "Cannot compute loop length without an active animation."
+                );
+            }
+            loopSeconds = computeLoopSeconds(animationState);
+            if (loopSeconds <= 0f) {
+                throw new IllegalStateException(
+                    "Animation duration is zero; cannot compute loop cycle."
+                );
+            }
+        }
+
+        float requestedSeconds;
+        switch (arguments.videoLoopMode()) {
+            case AUTO:
+                requestedSeconds = loopSeconds;
+                logInfo(
+                    String.format(
+                        Locale.ROOT,
+                        "Loop mode: auto (cycle %.3fs)",
+                        loopSeconds
+                    )
+                );
+                break;
+            case CYCLES:
+                requestedSeconds = loopSeconds * arguments.videoLoopCycles();
+                logInfo(
+                    String.format(
+                        Locale.ROOT,
+                        "Loop mode: %d cycle(s) (cycle %.3fs)",
+                        arguments.videoLoopCycles(),
+                        loopSeconds
+                    )
+                );
+                break;
+            case OFF:
+            default:
+                requestedSeconds = Math.max(arguments.videoSeconds(), 0f);
+                break;
+        }
+
+        if (requestedSeconds <= 0f) {
+            requestedSeconds = 1f / fps;
+        }
+
+        int frames = Math.max(1, Math.round(requestedSeconds * fps));
+        float totalSeconds = frames / (float) fps;
+        float step = 1f / fps;
         Path framesDir = arguments.framesDir();
+
         logInfo(
-            "Producing video preview (" +
-                frames +
-                " frame(s) @ " +
-                arguments.fps() +
-                " fps) -> " +
+            String.format(
+                Locale.ROOT,
+                "Producing video preview (%d frame(s) over %.3fs @ %d fps) -> %s",
+                frames,
+                totalSeconds,
+                fps,
                 arguments.videoOutput()
+            )
         );
 
         if (arguments.outputPath() != null) {
@@ -396,6 +459,19 @@ public class App extends ApplicationAdapter {
         if (!arguments.keepFrames()) {
             deleteFrames(framesDir);
         }
+    }
+
+    private float computeLoopSeconds(AnimationState state) {
+        AnimationState.TrackEntry entry = state.getCurrent(0);
+        if (entry == null) {
+            throw new IllegalStateException("No animation set on track 0.");
+        }
+        float duration = entry.getAnimation().getDuration();
+        float timeScale = entry.getTimeScale();
+        if (timeScale == 0f) {
+            timeScale = 1f;
+        }
+        return duration / timeScale;
     }
 
     private FFmpegFrameRecorder startRecorder(
@@ -702,21 +778,26 @@ public class App extends ApplicationAdapter {
     }
 
     private void applyWorldTransform(Skeleton target) {
-        if (
-            UPDATE_WORLD_TRANSFORM_WITH_PHYSICS != null &&
-            PHYSICS_UPDATE_ENUM != null
-        ) {
-            try {
-                UPDATE_WORLD_TRANSFORM_WITH_PHYSICS.invoke(
-                    target,
-                    PHYSICS_UPDATE_ENUM
-                );
-                return;
-            } catch (IllegalAccessException | InvocationTargetException ex) {
-                throw new IllegalStateException(
-                    "Unable to invoke Skeleton.updateWorldTransform(Physics)",
-                    ex
-                );
+        if (UPDATE_WORLD_TRANSFORM_WITH_PHYSICS != null) {
+            Object physicsArg = PHYSICS_NONE_ENUM != null
+                ? PHYSICS_NONE_ENUM
+                : PHYSICS_UPDATE_ENUM;
+            if (physicsArg != null) {
+                try {
+                    UPDATE_WORLD_TRANSFORM_WITH_PHYSICS.invoke(
+                        target,
+                        physicsArg
+                    );
+                    return;
+                } catch (
+                    IllegalAccessException
+                    | InvocationTargetException ex
+                ) {
+                    throw new IllegalStateException(
+                        "Unable to invoke Skeleton.updateWorldTransform(Physics)",
+                        ex
+                    );
+                }
             }
         }
         if (UPDATE_WORLD_TRANSFORM_NO_ARGS != null) {
@@ -811,6 +892,12 @@ public class App extends ApplicationAdapter {
         private static final int DEFAULT_WINDOW_SIZE = 128;
         private static final int DEFAULT_MIN_OUTPUT_SIZE = 128;
 
+        enum LoopMode {
+            OFF,
+            AUTO,
+            CYCLES,
+        }
+
         private final Path atlasPath;
         private final Path skeletonPath;
         private final Path texturePath;
@@ -828,6 +915,8 @@ public class App extends ApplicationAdapter {
         private final float videoSeconds;
         private final int fps;
         private final Path videoOutput;
+        private final LoopMode videoLoopMode;
+        private final int videoLoopCycles;
         private final boolean keepFrames;
         private final Path framesDir;
         private final Path animationFile;
@@ -851,6 +940,8 @@ public class App extends ApplicationAdapter {
             float videoSeconds,
             int fps,
             Path videoOutput,
+            LoopMode videoLoopMode,
+            int videoLoopCycles,
             boolean keepFrames,
             Path framesDir,
             Path animationFile,
@@ -873,6 +964,8 @@ public class App extends ApplicationAdapter {
             this.videoSeconds = videoSeconds;
             this.fps = fps;
             this.videoOutput = videoOutput;
+            this.videoLoopMode = videoLoopMode;
+            this.videoLoopCycles = videoLoopCycles;
             this.keepFrames = keepFrames;
             this.framesDir = framesDir;
             this.animationFile = animationFile;
@@ -897,6 +990,8 @@ public class App extends ApplicationAdapter {
             float videoSeconds = 0f;
             int fps = 30;
             Path videoOutput = null;
+            LoopMode loopMode = LoopMode.OFF;
+            int loopCycles = 0;
             boolean keepFrames = false;
             Path folder = null;
             Path animationFile = null;
@@ -971,6 +1066,33 @@ public class App extends ApplicationAdapter {
                         break;
                     case "--video-output":
                         videoOutput = nextPath(args, ++i, arg);
+                        break;
+                    case "--video-loop":
+                        String loopValue = nextValue(args, ++i, arg)
+                            .toLowerCase(Locale.ROOT)
+                            .trim();
+                        if ("auto".equals(loopValue)) {
+                            loopMode = LoopMode.AUTO;
+                            loopCycles = 1;
+                        } else if ("off".equals(loopValue)) {
+                            loopMode = LoopMode.OFF;
+                            loopCycles = 0;
+                        } else {
+                            try {
+                                int parsed = Integer.parseInt(loopValue);
+                                if (parsed <= 0) {
+                                    throw new IllegalArgumentException(
+                                        "--video-loop expects a positive integer, 'auto', or 'off'."
+                                    );
+                                }
+                                loopMode = LoopMode.CYCLES;
+                                loopCycles = parsed;
+                            } catch (NumberFormatException ex) {
+                                throw new IllegalArgumentException(
+                                    "--video-loop expects a positive integer, 'auto', or 'off'."
+                                );
+                            }
+                        }
                         break;
                     case "--keep-frames":
                         keepFrames = true;
@@ -1108,6 +1230,8 @@ public class App extends ApplicationAdapter {
                 videoSeconds,
                 fps,
                 videoOutput,
+                loopMode,
+                loopCycles,
                 keepFrames,
                 normalizedFramesDir,
                 animationFile,
@@ -1269,7 +1393,7 @@ public class App extends ApplicationAdapter {
             System.err.println(
                 "Usage: java -jar create_preview.jar (--folder path/to/assets | --atlas path/to/atlas.atlas --skeleton path/to/skeleton.{skel|json} --texture path/to/textures.png) " +
                     "[--output output.png] [--scale value] [--width px] [--height px] [--skin name] [--animation name|path] " +
-                    "[--time seconds] [--video-seconds seconds] [--fps value] [--video-output output.mp4] [--keep-frames]\n" +
+                    "[--time seconds] [--video-seconds seconds] [--fps value] [--video-output output.mp4] [--video-loop auto|off|N] [--keep-frames]\n" +
                     "The --texture argument can point to a single PNG file or a directory containing the atlas images."
             );
         }
@@ -1344,6 +1468,18 @@ public class App extends ApplicationAdapter {
 
         public Path videoOutput() {
             return videoOutput;
+        }
+
+        public LoopMode videoLoopMode() {
+            return videoLoopMode;
+        }
+
+        public int videoLoopCycles() {
+            return videoLoopCycles;
+        }
+
+        public boolean shouldRenderVideo() {
+            return videoLoopMode != LoopMode.OFF || videoSeconds > 0f;
         }
 
         public boolean keepFrames() {
