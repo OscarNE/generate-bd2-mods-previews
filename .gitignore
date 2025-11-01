@@ -3,3 +3,5 @@
 *.zip
 *.tar
 *.mp4
+
+!gradle/wrapper/gradle-wrapper.jar
