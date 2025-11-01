@@ -36,22 +36,42 @@ import java.util.Locale;
 import java.util.stream.Stream;
 
 public class App extends ApplicationAdapter {
+
     private static final Method UPDATE_WORLD_TRANSFORM_WITH_PHYSICS;
+    private static final Method UPDATE_WORLD_TRANSFORM_NO_ARGS;
     private static final Object PHYSICS_UPDATE_ENUM;
     private static final Method SKELETON_UPDATE_METHOD;
 
     static {
         Method worldTransformMethod = null;
+        Method worldTransformNoArgs = null;
         Object physicsUpdateEnum = null;
         try {
-            Class<?> physicsClass = Class.forName("com.esotericsoftware.spine.Skeleton$Physics");
+            Class<?> physicsClass = Class.forName(
+                "com.esotericsoftware.spine.Skeleton$Physics"
+            );
             @SuppressWarnings("unchecked")
             Enum<?> update = Enum.valueOf((Class<Enum>) physicsClass, "Update");
-            worldTransformMethod = Skeleton.class.getMethod("updateWorldTransform", physicsClass);
+            worldTransformMethod = Skeleton.class.getMethod(
+                "updateWorldTransform",
+                physicsClass
+            );
             physicsUpdateEnum = update;
-        } catch (ClassNotFoundException | NoSuchMethodException | IllegalArgumentException ignored) {
+        } catch (
+            ClassNotFoundException
+            | NoSuchMethodException
+            | IllegalArgumentException ignored
+        ) {
             worldTransformMethod = null;
             physicsUpdateEnum = null;
+        }
+
+        try {
+            worldTransformNoArgs = Skeleton.class.getMethod(
+                "updateWorldTransform"
+            );
+        } catch (NoSuchMethodException ignored) {
+            worldTransformNoArgs = null;
         }
 
         Method updateMethod;
@@ -62,6 +82,7 @@ public class App extends ApplicationAdapter {
         }
 
         UPDATE_WORLD_TRANSFORM_WITH_PHYSICS = worldTransformMethod;
+        UPDATE_WORLD_TRANSFORM_NO_ARGS = worldTransformNoArgs;
         PHYSICS_UPDATE_ENUM = physicsUpdateEnum;
         SKELETON_UPDATE_METHOD = updateMethod;
     }
@@ -85,14 +106,29 @@ public class App extends ApplicationAdapter {
 
     @Override
     public void create() {
-        FileHandle atlasHandle = Gdx.files.absolute(arguments.atlasPath().toString());
-        FileHandle skeletonHandle = Gdx.files.absolute(arguments.skeletonPath().toString());
-        FileHandle texturesDirHandle = Gdx.files.absolute(arguments.textureDirectory().toString());
+        FileHandle atlasHandle = Gdx.files.absolute(
+            arguments.atlasPath().toString()
+        );
+        FileHandle skeletonHandle = Gdx.files.absolute(
+            arguments.skeletonPath().toString()
+        );
+        FileHandle texturesDirHandle = Gdx.files.absolute(
+            arguments.textureDirectory().toString()
+        );
         atlas = new TextureAtlas(atlasHandle, texturesDirHandle);
 
-        SkeletonData skeletonData = readSkeletonData(arguments.skeletonPath(), arguments.scale());
-        if (arguments.animationFile() != null && !arguments.animationFile().equals(arguments.skeletonPath())) {
-            SkeletonData animationData = readSkeletonData(arguments.animationFile(), arguments.scale());
+        SkeletonData skeletonData = readSkeletonData(
+            arguments.skeletonPath(),
+            arguments.scale()
+        );
+        if (
+            arguments.animationFile() != null &&
+            !arguments.animationFile().equals(arguments.skeletonPath())
+        ) {
+            SkeletonData animationData = readSkeletonData(
+                arguments.animationFile(),
+                arguments.scale()
+            );
             skeletonData.getAnimations().clear();
             skeletonData.getAnimations().addAll(animationData.getAnimations());
         }
@@ -102,7 +138,10 @@ public class App extends ApplicationAdapter {
         skeleton.setToSetupPose();
 
         String selectedAnimation = arguments.animationName();
-        if ((selectedAnimation == null || selectedAnimation.isEmpty()) && skeletonData.getAnimations().size > 0) {
+        if (
+            (selectedAnimation == null || selectedAnimation.isEmpty()) &&
+            skeletonData.getAnimations().size > 0
+        ) {
             selectedAnimation = skeletonData.getAnimations().first().getName();
         }
 
@@ -121,8 +160,12 @@ public class App extends ApplicationAdapter {
         }
 
         GeometryBounds geometryBounds = computeGeometryBounds(skeleton);
-        float width = geometryBounds.hasGeometry() ? geometryBounds.width() : arguments.minOutputSize();
-        float height = geometryBounds.hasGeometry() ? geometryBounds.height() : arguments.minOutputSize();
+        float width = geometryBounds.hasGeometry()
+            ? geometryBounds.width()
+            : arguments.minOutputSize();
+        float height = geometryBounds.hasGeometry()
+            ? geometryBounds.height()
+            : arguments.minOutputSize();
 
         if (arguments.overrideWidth() != null) {
             width = arguments.overrideWidth();
@@ -142,8 +185,12 @@ public class App extends ApplicationAdapter {
         }
 
         if (geometryBounds.hasGeometry()) {
-            float translateX = -geometryBounds.minX() + (outputWidth - geometryBounds.width()) / 2f;
-            float translateY = -geometryBounds.minY() + (outputHeight - geometryBounds.height()) / 2f;
+            float translateX =
+                -geometryBounds.minX() +
+                (outputWidth - geometryBounds.width()) / 2f;
+            float translateY =
+                -geometryBounds.minY() +
+                (outputHeight - geometryBounds.height()) / 2f;
             skeleton.setPosition(translateX, translateY);
             applyWorldTransform(skeleton);
         }
@@ -157,7 +204,12 @@ public class App extends ApplicationAdapter {
         renderer = new SkeletonRenderer();
         renderer.setPremultipliedAlpha(false);
 
-        frameBuffer = new FrameBuffer(Pixmap.Format.RGBA8888, outputWidth, outputHeight, true);
+        frameBuffer = new FrameBuffer(
+            Pixmap.Format.RGBA8888,
+            outputWidth,
+            outputHeight,
+            true
+        );
 
         if (arguments.videoSeconds() > 0f) {
             renderVideoSequence();
@@ -194,7 +246,10 @@ public class App extends ApplicationAdapter {
     }
 
     private void renderVideoSequence() {
-        int frames = Math.max(1, Math.round(arguments.videoSeconds() * arguments.fps()));
+        int frames = Math.max(
+            1,
+            Math.round(arguments.videoSeconds() * arguments.fps())
+        );
         float step = 1f / arguments.fps();
         Path framesDir = arguments.framesDir();
 
@@ -209,12 +264,17 @@ public class App extends ApplicationAdapter {
         try {
             Files.createDirectories(framesDir);
         } catch (IOException e) {
-            throw new IllegalStateException("Unable to create frames directory: " + framesDir, e);
+            throw new IllegalStateException(
+                "Unable to create frames directory: " + framesDir,
+                e
+            );
         }
 
         for (int i = 0; i < frames; i++) {
             Pixmap framePixmap = renderCurrentFrame();
-            Path framePath = framesDir.resolve(String.format(Locale.ROOT, "frame_%05d.png", i));
+            Path framePath = framesDir.resolve(
+                String.format(Locale.ROOT, "frame_%05d.png", i)
+            );
             writePixmap(framePath, framePixmap);
             framePixmap.dispose();
 
@@ -261,19 +321,19 @@ public class App extends ApplicationAdapter {
 
     private void encodeWithFfmpeg(Path framesDir, int fps, Path videoOut) {
         ProcessBuilder builder = new ProcessBuilder(
-                "ffmpeg",
-                "-y",
-                "-framerate",
-                String.valueOf(fps),
-                "-i",
-                framesDir.resolve("frame_%05d.png").toString(),
-                "-vf",
-                "format=yuv420p",
-                "-movflags",
-                "+faststart",
-                "-r",
-                String.valueOf(fps),
-                videoOut.toString()
+            "ffmpeg",
+            "-y",
+            "-framerate",
+            String.valueOf(fps),
+            "-i",
+            framesDir.resolve("frame_%05d.png").toString(),
+            "-vf",
+            "format=yuv420p",
+            "-movflags",
+            "+faststart",
+            "-r",
+            String.valueOf(fps),
+            videoOut.toString()
         );
         builder.inheritIO();
 
@@ -281,7 +341,9 @@ public class App extends ApplicationAdapter {
             Process process = builder.start();
             int code = process.waitFor();
             if (code != 0) {
-                throw new IllegalStateException("ffmpeg exited with code " + code);
+                throw new IllegalStateException(
+                    "ffmpeg exited with code " + code
+                );
             }
         } catch (IOException ex) {
             throw new IllegalStateException("ffmpeg failed", ex);
@@ -298,16 +360,22 @@ public class App extends ApplicationAdapter {
 
         try {
             Files.walk(framesDir)
-                    .sorted(Comparator.reverseOrder())
-                    .forEach(path -> {
-                        try {
-                            Files.deleteIfExists(path);
-                        } catch (IOException ex) {
-                            throw new IllegalStateException("Failed to delete frame path: " + path, ex);
-                        }
-                    });
+                .sorted(Comparator.reverseOrder())
+                .forEach(path -> {
+                    try {
+                        Files.deleteIfExists(path);
+                    } catch (IOException ex) {
+                        throw new IllegalStateException(
+                            "Failed to delete frame path: " + path,
+                            ex
+                        );
+                    }
+                });
         } catch (IOException ex) {
-            throw new IllegalStateException("Failed to clean frames directory: " + framesDir, ex);
+            throw new IllegalStateException(
+                "Failed to clean frames directory: " + framesDir,
+                ex
+            );
         }
     }
 
@@ -326,7 +394,9 @@ public class App extends ApplicationAdapter {
                 }
                 Skin part = skeletonData.findSkin(trimmed);
                 if (part == null) {
-                    throw new IllegalArgumentException("Skin not found: " + trimmed);
+                    throw new IllegalArgumentException(
+                        "Skin not found: " + trimmed
+                    );
                 }
                 combined.addSkin(part);
             }
@@ -334,7 +404,9 @@ public class App extends ApplicationAdapter {
         } else {
             Skin skin = skeletonData.findSkin(requestedSkin);
             if (skin == null) {
-                throw new IllegalArgumentException("Skin not found: " + requestedSkin);
+                throw new IllegalArgumentException(
+                    "Skin not found: " + requestedSkin
+                );
             }
             skeleton.setSkin(skin);
         }
@@ -362,25 +434,32 @@ public class App extends ApplicationAdapter {
         try {
             SKELETON_UPDATE_METHOD.invoke(target, delta);
         } catch (IllegalAccessException | InvocationTargetException ex) {
-            throw new IllegalStateException("Unable to invoke Skeleton.update(float)", ex);
+            throw new IllegalStateException(
+                "Unable to invoke Skeleton.update(float)",
+                ex
+            );
         }
     }
 
     private Pixmap flipPixmapVertically(Pixmap pixmap) {
-        Pixmap flipped = new Pixmap(pixmap.getWidth(), pixmap.getHeight(), pixmap.getFormat());
+        Pixmap flipped = new Pixmap(
+            pixmap.getWidth(),
+            pixmap.getHeight(),
+            pixmap.getFormat()
+        );
         Pixmap.Blending old = flipped.getBlending();
         flipped.setBlending(Pixmap.Blending.None);
         for (int y = 0; y < pixmap.getHeight(); y++) {
             flipped.drawPixmap(
-                    pixmap,
-                    0,
-                    pixmap.getHeight() - y - 1,
-                    pixmap.getWidth(),
-                    1,
-                    0,
-                    y,
-                    pixmap.getWidth(),
-                    1
+                pixmap,
+                0,
+                pixmap.getHeight() - y - 1,
+                pixmap.getWidth(),
+                1,
+                0,
+                y,
+                pixmap.getWidth(),
+                1
             );
         }
         flipped.setBlending(old);
@@ -400,7 +479,8 @@ public class App extends ApplicationAdapter {
                 continue;
             }
 
-            if (attachment instanceof RegionAttachment region) {
+            if (attachment instanceof RegionAttachment) {
+                RegionAttachment region = (RegionAttachment) attachment;
                 ensureWorldVerticesCapacity(8);
                 region.computeWorldVertices(slot, worldVerticesBuffer, 0, 2);
                 for (int i = 0; i < 8; i += 2) {
@@ -412,13 +492,21 @@ public class App extends ApplicationAdapter {
                     maxY = Math.max(maxY, y);
                 }
                 foundGeometry = true;
-            } else if (attachment instanceof MeshAttachment mesh) {
+            } else if (attachment instanceof MeshAttachment) {
+                MeshAttachment mesh = (MeshAttachment) attachment;
                 int vertexCount = mesh.getWorldVerticesLength();
                 if (vertexCount <= 0) {
                     continue;
                 }
                 ensureWorldVerticesCapacity(vertexCount);
-                mesh.computeWorldVertices(slot, 0, vertexCount, worldVerticesBuffer, 0, 2);
+                mesh.computeWorldVertices(
+                    slot,
+                    0,
+                    vertexCount,
+                    worldVerticesBuffer,
+                    0,
+                    2
+                );
                 for (int i = 0; i < vertexCount; i += 2) {
                     float x = worldVerticesBuffer[i];
                     float y = worldVerticesBuffer[i + 1];
@@ -449,7 +537,15 @@ public class App extends ApplicationAdapter {
         ByteBuffer pixels = BufferUtils.newByteBuffer(amount);
         Gdx.gl.glFinish();
         Gdx.gl20.glPixelStorei(GL20.GL_PACK_ALIGNMENT, 1);
-        Gdx.gl20.glReadPixels(0, 0, width, height, GL20.GL_RGBA, GL20.GL_UNSIGNED_BYTE, pixels);
+        Gdx.gl20.glReadPixels(
+            0,
+            0,
+            width,
+            height,
+            GL20.GL_RGBA,
+            GL20.GL_UNSIGNED_BYTE,
+            pixels
+        );
         pixels.rewind();
         Pixmap pixmap = new Pixmap(width, height, Pixmap.Format.RGBA8888);
         BufferUtils.copy(pixels, pixmap.getPixels(), amount);
@@ -457,15 +553,37 @@ public class App extends ApplicationAdapter {
     }
 
     private void applyWorldTransform(Skeleton target) {
-        if (UPDATE_WORLD_TRANSFORM_WITH_PHYSICS != null && PHYSICS_UPDATE_ENUM != null) {
+        if (
+            UPDATE_WORLD_TRANSFORM_WITH_PHYSICS != null &&
+            PHYSICS_UPDATE_ENUM != null
+        ) {
             try {
-                UPDATE_WORLD_TRANSFORM_WITH_PHYSICS.invoke(target, PHYSICS_UPDATE_ENUM);
+                UPDATE_WORLD_TRANSFORM_WITH_PHYSICS.invoke(
+                    target,
+                    PHYSICS_UPDATE_ENUM
+                );
                 return;
             } catch (IllegalAccessException | InvocationTargetException ex) {
-                throw new IllegalStateException("Unable to invoke Skeleton.updateWorldTransform(Physics)", ex);
+                throw new IllegalStateException(
+                    "Unable to invoke Skeleton.updateWorldTransform(Physics)",
+                    ex
+                );
             }
         }
-        target.updateWorldTransform();
+        if (UPDATE_WORLD_TRANSFORM_NO_ARGS != null) {
+            try {
+                UPDATE_WORLD_TRANSFORM_NO_ARGS.invoke(target);
+                return;
+            } catch (IllegalAccessException | InvocationTargetException ex) {
+                throw new IllegalStateException(
+                    "Unable to invoke Skeleton.updateWorldTransform()",
+                    ex
+                );
+            }
+        }
+        throw new IllegalStateException(
+            "No compatible Skeleton.updateWorldTransform method found"
+        );
     }
 
     private SkeletonData readSkeletonData(Path path, float scale) {
@@ -491,12 +609,16 @@ public class App extends ApplicationAdapter {
             return;
         }
 
-        Lwjgl3ApplicationConfiguration config = new Lwjgl3ApplicationConfiguration();
+        Lwjgl3ApplicationConfiguration config =
+            new Lwjgl3ApplicationConfiguration();
         config.setTitle("Spine Preview Generator");
         config.useVsync(false);
         config.setForegroundFPS(0);
         config.setIdleFPS(0);
-        config.setWindowedMode(cliArguments.initialWindowWidth(), cliArguments.initialWindowHeight());
+        config.setWindowedMode(
+            cliArguments.initialWindowWidth(),
+            cliArguments.initialWindowHeight()
+        );
         config.setResizable(false);
         config.setDecorated(false);
         config.setInitialVisible(false);
@@ -506,6 +628,7 @@ public class App extends ApplicationAdapter {
     }
 
     public static final class CliArguments {
+
         private static final int DEFAULT_WINDOW_SIZE = 128;
         private static final int DEFAULT_MIN_OUTPUT_SIZE = 128;
 
@@ -532,27 +655,27 @@ public class App extends ApplicationAdapter {
         private final Path folder;
 
         private CliArguments(
-                Path atlasPath,
-                Path skeletonPath,
-                Path texturePath,
-                Path textureDirectory,
-                Path outputPath,
-                float scale,
-                Integer overrideWidth,
-                Integer overrideHeight,
-                String skinName,
-                String animationName,
-                float animationTime,
-                int initialWindowWidth,
-                int initialWindowHeight,
-                int minOutputSize,
-                float videoSeconds,
-                int fps,
-                Path videoOutput,
-                boolean keepFrames,
-                Path framesDir,
-                Path animationFile,
-                Path folder
+            Path atlasPath,
+            Path skeletonPath,
+            Path texturePath,
+            Path textureDirectory,
+            Path outputPath,
+            float scale,
+            Integer overrideWidth,
+            Integer overrideHeight,
+            String skinName,
+            String animationName,
+            float animationTime,
+            int initialWindowWidth,
+            int initialWindowHeight,
+            int minOutputSize,
+            float videoSeconds,
+            int fps,
+            Path videoOutput,
+            boolean keepFrames,
+            Path framesDir,
+            Path animationFile,
+            Path folder
         ) {
             this.atlasPath = atlasPath;
             this.skeletonPath = skeletonPath;
@@ -624,10 +747,14 @@ public class App extends ApplicationAdapter {
                         scale = Float.parseFloat(nextValue(args, ++i, arg));
                         break;
                     case "--width":
-                        forcedWidth = Integer.parseInt(nextValue(args, ++i, arg));
+                        forcedWidth = Integer.parseInt(
+                            nextValue(args, ++i, arg)
+                        );
                         break;
                     case "--height":
-                        forcedHeight = Integer.parseInt(nextValue(args, ++i, arg));
+                        forcedHeight = Integer.parseInt(
+                            nextValue(args, ++i, arg)
+                        );
                         break;
                     case "--skin":
                         skin = nextValue(args, ++i, arg);
@@ -636,19 +763,29 @@ public class App extends ApplicationAdapter {
                         animationCandidate = nextValue(args, ++i, arg);
                         break;
                     case "--time":
-                        animationTime = Float.parseFloat(nextValue(args, ++i, arg));
+                        animationTime = Float.parseFloat(
+                            nextValue(args, ++i, arg)
+                        );
                         break;
                     case "--window-width":
-                        windowWidth = Integer.parseInt(nextValue(args, ++i, arg));
+                        windowWidth = Integer.parseInt(
+                            nextValue(args, ++i, arg)
+                        );
                         break;
                     case "--window-height":
-                        windowHeight = Integer.parseInt(nextValue(args, ++i, arg));
+                        windowHeight = Integer.parseInt(
+                            nextValue(args, ++i, arg)
+                        );
                         break;
                     case "--min-output":
-                        minOutputSize = Integer.parseInt(nextValue(args, ++i, arg));
+                        minOutputSize = Integer.parseInt(
+                            nextValue(args, ++i, arg)
+                        );
                         break;
                     case "--video-seconds":
-                        videoSeconds = Float.parseFloat(nextValue(args, ++i, arg));
+                        videoSeconds = Float.parseFloat(
+                            nextValue(args, ++i, arg)
+                        );
                         break;
                     case "--fps":
                         fps = Integer.parseInt(nextValue(args, ++i, arg));
@@ -663,23 +800,38 @@ public class App extends ApplicationAdapter {
                         folder = nextPath(args, ++i, arg);
                         break;
                     default:
-                        throw new IllegalArgumentException("Unknown argument: " + arg);
+                        throw new IllegalArgumentException(
+                            "Unknown argument: " + arg
+                        );
                 }
             }
 
             if (folder != null) {
                 folder = folder.toAbsolutePath().normalize();
                 if (!Files.isDirectory(folder)) {
-                    throw new IllegalArgumentException("Folder is not a directory: " + folder);
+                    throw new IllegalArgumentException(
+                        "Folder is not a directory: " + folder
+                    );
                 }
-                atlas = atlas != null ? atlas : findFirstWithExtension(folder, "atlas", ".atlas");
-                skeleton = skeleton != null ? skeleton : findFirstWithExtension(folder, "skeleton", ".skel", ".json");
+                atlas = atlas != null
+                    ? atlas
+                    : findFirstWithExtension(folder, "atlas", ".atlas");
+                skeleton = skeleton != null
+                    ? skeleton
+                    : findFirstWithExtension(
+                          folder,
+                          "skeleton",
+                          ".skel",
+                          ".json"
+                      );
                 if (texture == null) {
                     Path png = findFirstPng(folder);
                     if (png != null) {
                         texture = png;
                     } else {
-                        throw new IllegalArgumentException("No .png textures found in folder " + folder);
+                        throw new IllegalArgumentException(
+                            "No .png textures found in folder " + folder
+                        );
                     }
                 }
             }
@@ -696,7 +848,12 @@ public class App extends ApplicationAdapter {
                     }
                 }
                 if (resolvedPath != null) {
-                    animationFile = toAbsoluteExistingFile(resolvedPath, "--animation", ".skel", ".json");
+                    animationFile = toAbsoluteExistingFile(
+                        resolvedPath,
+                        "--animation",
+                        ".skel",
+                        ".json"
+                    );
                 } else {
                     animation = animationCandidate;
                 }
@@ -707,17 +864,28 @@ public class App extends ApplicationAdapter {
             }
 
             if (atlas == null || skeleton == null || texture == null) {
-                throw new IllegalArgumentException("Missing required arguments. Expected --atlas, --skeleton, and --texture.");
+                throw new IllegalArgumentException(
+                    "Missing required arguments. Expected --atlas, --skeleton, and --texture."
+                );
             }
 
             atlas = toAbsoluteExistingFile(atlas, "--atlas", ".atlas");
-            skeleton = toAbsoluteExistingFile(skeleton, "--skeleton", ".skel", ".json");
+            skeleton = toAbsoluteExistingFile(
+                skeleton,
+                "--skeleton",
+                ".skel",
+                ".json"
+            );
             texture = texture.toAbsolutePath().normalize();
             if (!Files.exists(texture)) {
-                throw new IllegalArgumentException("Texture not found: " + texture);
+                throw new IllegalArgumentException(
+                    "Texture not found: " + texture
+                );
             }
 
-            Path textureDir = Files.isDirectory(texture) ? texture : texture.getParent();
+            Path textureDir = Files.isDirectory(texture)
+                ? texture
+                : texture.getParent();
             if (textureDir == null) {
                 textureDir = texture.getRoot();
             }
@@ -734,7 +902,9 @@ public class App extends ApplicationAdapter {
             videoSeconds = Math.max(0f, videoSeconds);
             fps = Math.max(1, fps);
 
-            Path normalizedFramesDir = defaultFramesDir(output).toAbsolutePath().normalize();
+            Path normalizedFramesDir = defaultFramesDir(output)
+                .toAbsolutePath()
+                .normalize();
 
             if (videoOutput == null) {
                 videoOutput = defaultVideoPath(output);
@@ -742,27 +912,27 @@ public class App extends ApplicationAdapter {
             videoOutput = videoOutput.toAbsolutePath().normalize();
 
             return new CliArguments(
-                    atlas,
-                    skeleton,
-                    texture,
-                    textureDir.toAbsolutePath().normalize(),
-                    output,
-                    scale,
-                    forcedWidth,
-                    forcedHeight,
-                    skin,
-                    animation,
-                    animationTime,
-                    Math.max(1, windowWidth),
-                    Math.max(1, windowHeight),
-                    Math.max(1, minOutputSize),
-                    videoSeconds,
-                    fps,
-                    videoOutput,
-                    keepFrames,
-                    normalizedFramesDir,
-                    animationFile,
-                    folder
+                atlas,
+                skeleton,
+                texture,
+                textureDir.toAbsolutePath().normalize(),
+                output,
+                scale,
+                forcedWidth,
+                forcedHeight,
+                skin,
+                animation,
+                animationTime,
+                Math.max(1, windowWidth),
+                Math.max(1, windowHeight),
+                Math.max(1, minOutputSize),
+                videoSeconds,
+                fps,
+                videoOutput,
+                keepFrames,
+                normalizedFramesDir,
+                animationFile,
+                folder
             );
         }
 
@@ -772,23 +942,35 @@ public class App extends ApplicationAdapter {
 
         private static String nextValue(String[] args, int index, String flag) {
             if (index >= args.length) {
-                throw new IllegalArgumentException("Expected a value after " + flag);
+                throw new IllegalArgumentException(
+                    "Expected a value after " + flag
+                );
             }
             return args[index];
         }
 
-        private static Path toAbsoluteExistingFile(Path path, String flag, String... expectedExtensions) {
+        private static Path toAbsoluteExistingFile(
+            Path path,
+            String flag,
+            String... expectedExtensions
+        ) {
             Path absolute = path.toAbsolutePath().normalize();
             if (!Files.exists(absolute)) {
-                throw new IllegalArgumentException("File not found for " + flag + ": " + absolute);
+                throw new IllegalArgumentException(
+                    "File not found for " + flag + ": " + absolute
+                );
             }
             if (expectedExtensions.length > 0) {
                 String lower = absolute.toString().toLowerCase(Locale.ROOT);
                 boolean matches = Arrays.stream(expectedExtensions)
-                        .map(ext -> ext.toLowerCase(Locale.ROOT))
-                        .anyMatch(lower::endsWith);
+                    .map(ext -> ext.toLowerCase(Locale.ROOT))
+                    .anyMatch(lower::endsWith);
                 if (!matches) {
-                    throw new IllegalArgumentException(flag + " must point to a file with one of extensions " + Arrays.toString(expectedExtensions));
+                    throw new IllegalArgumentException(
+                        flag +
+                            " must point to a file with one of extensions " +
+                            Arrays.toString(expectedExtensions)
+                    );
                 }
             }
             return absolute;
@@ -797,18 +979,25 @@ public class App extends ApplicationAdapter {
         private static Path defaultOutputPath(Path atlas) {
             String fileName = atlas.getFileName().toString();
             int lastDot = fileName.lastIndexOf('.');
-            String stem = lastDot >= 0 ? fileName.substring(0, lastDot) : fileName;
+            String stem = lastDot >= 0
+                ? fileName.substring(0, lastDot)
+                : fileName;
             Path parent = atlas.getParent();
             if (parent == null) {
                 parent = Paths.get(".");
             }
-            return parent.resolve(stem + "-preview.png").toAbsolutePath().normalize();
+            return parent
+                .resolve(stem + "-preview.png")
+                .toAbsolutePath()
+                .normalize();
         }
 
         private static Path defaultVideoPath(Path output) {
             String fileName = output.getFileName().toString();
             int lastDot = fileName.lastIndexOf('.');
-            String stem = lastDot >= 0 ? fileName.substring(0, lastDot) : fileName;
+            String stem = lastDot >= 0
+                ? fileName.substring(0, lastDot)
+                : fileName;
             Path parent = output.getParent();
             if (parent == null) {
                 parent = Paths.get(".");
@@ -819,50 +1008,82 @@ public class App extends ApplicationAdapter {
         private static Path defaultFramesDir(Path output) {
             String fileName = output.getFileName().toString();
             int lastDot = fileName.lastIndexOf('.');
-            String stem = lastDot >= 0 ? fileName.substring(0, lastDot) : fileName;
+            String stem = lastDot >= 0
+                ? fileName.substring(0, lastDot)
+                : fileName;
             Path parent = output.getParent();
             if (parent == null) {
                 parent = Paths.get(".");
             }
-            return parent.resolve(stem + "_frames").toAbsolutePath().normalize();
+            return parent
+                .resolve(stem + "_frames")
+                .toAbsolutePath()
+                .normalize();
         }
 
-        private static Path findFirstWithExtension(Path dir, String description, String... extensions) {
+        private static Path findFirstWithExtension(
+            Path dir,
+            String description,
+            String... extensions
+        ) {
             String[] lowers = Arrays.stream(extensions)
-                    .map(ext -> ext.toLowerCase(Locale.ROOT))
-                    .toArray(String[]::new);
+                .map(ext -> ext.toLowerCase(Locale.ROOT))
+                .toArray(String[]::new);
             try (Stream<Path> stream = Files.walk(dir, 1)) {
                 return stream
-                        .filter(Files::isRegularFile)
-                        .filter(path -> Arrays.stream(lowers)
-                                .anyMatch(ext -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(ext)))
-                        .findFirst()
-                        .map(path -> path.toAbsolutePath().normalize())
-                        .orElseThrow(() -> new IllegalArgumentException("No " + description + " file found in folder " + dir));
+                    .filter(Files::isRegularFile)
+                    .filter(path ->
+                        Arrays.stream(lowers).anyMatch(ext ->
+                            path
+                                .getFileName()
+                                .toString()
+                                .toLowerCase(Locale.ROOT)
+                                .endsWith(ext)
+                        )
+                    )
+                    .findFirst()
+                    .map(path -> path.toAbsolutePath().normalize())
+                    .orElseThrow(() ->
+                        new IllegalArgumentException(
+                            "No " + description + " file found in folder " + dir
+                        )
+                    );
             } catch (IOException ex) {
-                throw new IllegalStateException("Failed to scan folder " + dir, ex);
+                throw new IllegalStateException(
+                    "Failed to scan folder " + dir,
+                    ex
+                );
             }
         }
 
         private static Path findFirstPng(Path dir) {
             try (Stream<Path> stream = Files.walk(dir)) {
                 return stream
-                        .filter(Files::isRegularFile)
-                        .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".png"))
-                        .findFirst()
-                        .map(path -> path.toAbsolutePath().normalize())
-                        .orElse(null);
+                    .filter(Files::isRegularFile)
+                    .filter(path ->
+                        path
+                            .getFileName()
+                            .toString()
+                            .toLowerCase(Locale.ROOT)
+                            .endsWith(".png")
+                    )
+                    .findFirst()
+                    .map(path -> path.toAbsolutePath().normalize())
+                    .orElse(null);
             } catch (IOException ex) {
-                throw new IllegalStateException("Failed to scan folder " + dir, ex);
+                throw new IllegalStateException(
+                    "Failed to scan folder " + dir,
+                    ex
+                );
             }
         }
 
         public static void printUsage() {
             System.err.println(
-                    "Usage: java -jar create_preview.jar (--folder path/to/assets | --atlas path/to/atlas.atlas --skeleton path/to/skeleton.{skel|json} --texture path/to/textures.png) "
-                            + "[--output output.png] [--scale value] [--width px] [--height px] [--skin name] [--animation name|path] "
-                            + "[--time seconds] [--video-seconds seconds] [--fps value] [--video-output output.mp4] [--keep-frames]\n"
-                            + "The --texture argument can point to a single PNG file or a directory containing the atlas images."
+                "Usage: java -jar create_preview.jar (--folder path/to/assets | --atlas path/to/atlas.atlas --skeleton path/to/skeleton.{skel|json} --texture path/to/textures.png) " +
+                    "[--output output.png] [--scale value] [--width px] [--height px] [--skin name] [--animation name|path] " +
+                    "[--time seconds] [--video-seconds seconds] [--fps value] [--video-output output.mp4] [--keep-frames]\n" +
+                    "The --texture argument can point to a single PNG file or a directory containing the atlas images."
             );
         }
 
@@ -952,7 +1173,14 @@ public class App extends ApplicationAdapter {
     }
 
     private static final class GeometryBounds {
-        private static final GeometryBounds EMPTY = new GeometryBounds(0f, 0f, 0f, 0f, false);
+
+        private static final GeometryBounds EMPTY = new GeometryBounds(
+            0f,
+            0f,
+            0f,
+            0f,
+            false
+        );
 
         private final float minX;
         private final float minY;
@@ -960,7 +1188,13 @@ public class App extends ApplicationAdapter {
         private final float maxY;
         private final boolean hasGeometry;
 
-        private GeometryBounds(float minX, float minY, float maxX, float maxY, boolean hasGeometry) {
+        private GeometryBounds(
+            float minX,
+            float minY,
+            float maxX,
+            float maxY,
+            boolean hasGeometry
+        ) {
             this.minX = minX;
             this.minY = minY;
             this.maxX = maxX;
@@ -968,7 +1202,12 @@ public class App extends ApplicationAdapter {
             this.hasGeometry = hasGeometry;
         }
 
-        static GeometryBounds of(float minX, float minY, float maxX, float maxY) {
+        static GeometryBounds of(
+            float minX,
+            float minY,
+            float maxX,
+            float maxY
+        ) {
             return new GeometryBounds(minX, minY, maxX, maxY, true);
         }
 
