@@ -1,0 +1,121 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'com.gradleup.shadow' version '9.2.2'
+    id 'maven-publish'
+}
+
+group = 'com.github.OscarNE'
+version = '0.1.1'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(11)
+    }
+    withSourcesJar()
+}
+
+application {
+    mainClass = 'App'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.badlogicgames.gdx:gdx:1.14.0'
+    implementation 'com.badlogicgames.gdx:gdx-backend-lwjgl3:1.14.0'
+    implementation 'com.badlogicgames.gdx:gdx-platform:1.14.0:natives-desktop'
+    implementation 'com.esotericsoftware.spine:spine-libgdx:4.2.10'
+    implementation 'org.bytedeco:javacv-platform:1.5.12'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+def prebuiltClassesDir = layout.projectDirectory.dir('bin/main')
+
+tasks.register('syncPrebuiltClasses', Sync) {
+    onlyIf { prebuiltClassesDir.asFile.exists() }
+    from(prebuiltClassesDir)
+    into(new File(buildDir, 'classes/java/main'))
+}
+
+tasks.named('classes') {
+    dependsOn('syncPrebuiltClasses')
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+def shadowJarTask = tasks.named('shadowJar') {
+    archiveClassifier.set('')
+    mergeServiceFiles()
+}
+
+tasks.named('distZip') {
+    dependsOn(shadowJarTask)
+}
+
+tasks.named('distTar') {
+    dependsOn(shadowJarTask)
+}
+
+tasks.named('startScripts') {
+    dependsOn(shadowJarTask)
+}
+
+tasks.named('startShadowScripts') {
+    dependsOn(tasks.named('jar'))
+}
+
+tasks.named('assemble') {
+    dependsOn(shadowJarTask)
+}
+
+publishing {
+    publications {
+        create('gpr', MavenPublication) {
+            artifactId = 'create-preview'
+            from components.shadow
+            artifact tasks.named('sourcesJar').get()
+
+            pom {
+                name = 'create-preview'
+                description = 'Tooling to generate preview assets for BD2 mods.'
+                url = 'https://github.com/OscarNE/generate-bd2-mods-previews'
+                licenses {
+                    license {
+                        name = 'MIT License'
+                        url = 'https://opensource.org/licenses/MIT'
+                    }
+                }
+                developers {
+                    developer {
+                        id = 'OscarNE'
+                    }
+                }
+                scm {
+                    connection = 'scm:git:https://github.com/OscarNE/generate-bd2-mods-previews.git'
+                    developerConnection = 'scm:git:ssh://git@github.com:OscarNE/generate-bd2-mods-previews.git'
+                    url = 'https://github.com/OscarNE/generate-bd2-mods-previews'
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = 'GitHubPackages'
+            url = uri('https://maven.pkg.github.com/OscarNE/generate-bd2-mods-previews')
+            credentials {
+                username = findProperty('gpr.user') ?: System.getenv('GITHUB_ACTOR') ?: System.getenv('GITHUB_USERNAME')
+                password = findProperty('gpr.key') ?: System.getenv('GITHUB_TOKEN')
+            }
+        }
+    }
+}
