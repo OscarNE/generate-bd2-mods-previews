@@ -3,13 +3,10 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3Application;
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3ApplicationConfiguration;
 import com.badlogic.gdx.files.FileHandle;
-import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.OrthographicCamera;
 import com.badlogic.gdx.graphics.Pixmap;
-import com.badlogic.gdx.graphics.PixmapIO;
 import com.badlogic.gdx.graphics.g2d.TextureAtlas;
 import com.badlogic.gdx.graphics.glutils.FrameBuffer;
-import com.badlogic.gdx.utils.BufferUtils;
 import com.esotericsoftware.spine.AnimationState;
 import com.esotericsoftware.spine.AnimationStateData;
 import com.esotericsoftware.spine.Skeleton;
@@ -23,24 +20,16 @@ import com.esotericsoftware.spine.attachments.Attachment;
 import com.esotericsoftware.spine.attachments.MeshAttachment;
 import com.esotericsoftware.spine.attachments.RegionAttachment;
 import com.esotericsoftware.spine.utils.TwoColorPolygonBatch;
-import java.awt.image.BufferedImage;
-import java.awt.image.DataBufferByte;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.Locale;
 import java.util.stream.Stream;
-import org.bytedeco.ffmpeg.global.avcodec;
-import org.bytedeco.ffmpeg.global.avutil;
-import org.bytedeco.javacv.FFmpegFrameRecorder;
-import org.bytedeco.javacv.Java2DFrameConverter;
 
 public class App extends ApplicationAdapter {
 
@@ -104,15 +93,15 @@ public class App extends ApplicationAdapter {
     private static final String LOG_PREFIX = "[create-preview]";
     private static final String SPINE_RUNTIME_VERSION = "4.1.0";
 
-    private static void logInfo(String message) {
+    static void logInfo(String message) {
         System.out.println(LOG_PREFIX + " INFO  " + message);
     }
 
-    private static void logWarn(String message) {
+    static void logWarn(String message) {
         System.out.println(LOG_PREFIX + " WARN  " + message);
     }
 
-    private static void logError(String message, Throwable error) {
+    static void logError(String message, Throwable error) {
         System.err.println(LOG_PREFIX + " ERROR " + message);
         if (error != null) {
             error.printStackTrace(System.err);
@@ -131,7 +120,6 @@ public class App extends ApplicationAdapter {
     private int outputHeight;
     private boolean exported;
     private float[] worldVerticesBuffer = new float[64];
-    private Java2DFrameConverter frameConverter;
 
     public App(CliArguments arguments) {
         this.arguments = arguments;
@@ -253,7 +241,6 @@ public class App extends ApplicationAdapter {
         batch = new TwoColorPolygonBatch();
         renderer = new SkeletonRenderer();
         renderer.setPremultipliedAlpha(false);
-        frameConverter = new Java2DFrameConverter();
 
         frameBuffer = new FrameBuffer(
             Pixmap.Format.RGBA8888,
@@ -262,10 +249,28 @@ public class App extends ApplicationAdapter {
             true
         );
 
+        FrameRenderer frameRenderer = new FrameRenderer(
+            renderer,
+            batch,
+            camera,
+            frameBuffer,
+            outputWidth,
+            outputHeight
+        );
+
+        ImageGenerator imageGenerator = new ImageGenerator(frameRenderer);
+        VideoGenerator videoGenerator = new VideoGenerator(
+            this,
+            arguments,
+            frameRenderer,
+            skeleton,
+            animationState
+        );
+
         if (arguments.shouldRenderVideo()) {
-            renderVideoSequence();
+            videoGenerator.generate();
         } else {
-            renderStillFrame(arguments.outputPath());
+            imageGenerator.generate(arguments.outputPath(), skeleton);
         }
 
         exported = true;
@@ -288,319 +293,6 @@ public class App extends ApplicationAdapter {
         }
         if (frameBuffer != null) {
             frameBuffer.dispose();
-        }
-    }
-
-    private void renderStillFrame(Path outputPath) {
-        Pixmap frame = renderCurrentFrame();
-        writePixmap(outputPath, frame);
-        frame.dispose();
-        logInfo("Preview image written to " + outputPath);
-    }
-
-    private void renderVideoSequence() {
-        int fps = arguments.fps();
-        if (fps <= 0) {
-            throw new IllegalArgumentException(
-                "FPS must be greater than zero."
-            );
-        }
-
-        float loopSeconds = 0f;
-        if (arguments.videoLoopMode() != CliArguments.LoopMode.OFF) {
-            if (animationState == null) {
-                throw new IllegalStateException(
-                    "Cannot compute loop length without an active animation."
-                );
-            }
-            loopSeconds = computeLoopSeconds(animationState);
-            if (loopSeconds <= 0f) {
-                throw new IllegalStateException(
-                    "Animation duration is zero; cannot compute loop cycle."
-                );
-            }
-        }
-
-        float requestedSeconds;
-        switch (arguments.videoLoopMode()) {
-            case AUTO:
-                requestedSeconds = loopSeconds;
-                logInfo(
-                    String.format(
-                        Locale.ROOT,
-                        "Loop mode: auto (cycle %.3fs)",
-                        loopSeconds
-                    )
-                );
-                break;
-            case CYCLES:
-                requestedSeconds = loopSeconds * arguments.videoLoopCycles();
-                logInfo(
-                    String.format(
-                        Locale.ROOT,
-                        "Loop mode: %d cycle(s) (cycle %.3fs)",
-                        arguments.videoLoopCycles(),
-                        loopSeconds
-                    )
-                );
-                break;
-            case OFF:
-            default:
-                requestedSeconds = Math.max(arguments.videoSeconds(), 0f);
-                break;
-        }
-
-        if (requestedSeconds <= 0f) {
-            requestedSeconds = 1f / fps;
-        }
-
-        int frames = Math.max(1, Math.round(requestedSeconds * fps));
-        float totalSeconds = frames / (float) fps;
-        float step = 1f / fps;
-        Path framesDir = arguments.framesDir();
-
-        logInfo(
-            String.format(
-                Locale.ROOT,
-                "Producing video preview (%d frame(s) over %.3fs @ %d fps) -> %s",
-                frames,
-                totalSeconds,
-                fps,
-                arguments.videoOutput()
-            )
-        );
-
-        if (arguments.outputPath() != null) {
-            Pixmap preview = renderCurrentFrame();
-            writePixmap(arguments.outputPath(), preview);
-            preview.dispose();
-        }
-
-        if (arguments.keepFrames()) {
-            deleteFrames(framesDir);
-            try {
-                Files.createDirectories(framesDir);
-                logInfo("Saving intermediate frames under " + framesDir);
-            } catch (IOException e) {
-                throw new IllegalStateException(
-                    "Unable to create frames directory: " + framesDir,
-                    e
-                );
-            }
-        } else {
-            deleteFrames(framesDir);
-            logInfo("Intermediate frames will be discarded after encoding.");
-        }
-
-        FFmpegFrameRecorder recorder = null;
-        Exception encodeError = null;
-        try {
-            recorder = startRecorder(
-                arguments.videoOutput(),
-                outputWidth,
-                outputHeight,
-                arguments.fps()
-            );
-            for (int i = 0; i < frames; i++) {
-                Pixmap framePixmap = renderCurrentFrame();
-
-                if (arguments.keepFrames()) {
-                    Path framePath = framesDir.resolve(
-                        String.format(Locale.ROOT, "frame_%05d.png", i)
-                    );
-                    writePixmap(framePath, framePixmap);
-                }
-
-                recordFrame(recorder, framePixmap);
-                framePixmap.dispose();
-
-                if (i < frames - 1) {
-                    advanceAnimation(step);
-                }
-            }
-        } catch (Exception ex) {
-            encodeError = ex;
-        } finally {
-            if (recorder != null) {
-                try {
-                    recorder.stop();
-                } catch (Exception stopEx) {
-                    if (encodeError != null) {
-                        encodeError.addSuppressed(stopEx);
-                    } else {
-                        encodeError = stopEx;
-                    }
-                }
-                try {
-                    recorder.release();
-                } catch (Exception releaseEx) {
-                    if (encodeError != null) {
-                        encodeError.addSuppressed(releaseEx);
-                    } else {
-                        encodeError = releaseEx;
-                    }
-                }
-            }
-        }
-
-        if (encodeError != null) {
-            logError(
-                "Failed to encode video: " + encodeError.getMessage(),
-                encodeError
-            );
-            throw new IllegalStateException(
-                "Failed to encode video",
-                encodeError
-            );
-        }
-
-        logInfo("Video preview written to " + arguments.videoOutput());
-
-        if (!arguments.keepFrames()) {
-            deleteFrames(framesDir);
-        }
-    }
-
-    private float computeLoopSeconds(AnimationState state) {
-        AnimationState.TrackEntry entry = state.getCurrent(0);
-        if (entry == null) {
-            throw new IllegalStateException("No animation set on track 0.");
-        }
-        float duration = entry.getAnimation().getDuration();
-        float timeScale = entry.getTimeScale();
-        if (timeScale == 0f) {
-            timeScale = 1f;
-        }
-        return duration / timeScale;
-    }
-
-    private FFmpegFrameRecorder startRecorder(
-        Path output,
-        int width,
-        int height,
-        int fps
-    ) throws Exception {
-        Path parent = output.getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
-        }
-
-        FFmpegFrameRecorder recorder = new FFmpegFrameRecorder(
-            output.toString(),
-            width,
-            height
-        );
-        long pixelsPerSecond = (long) width * height * Math.max(1, fps);
-        long targetBitrate = Math.max(2_000_000L, (pixelsPerSecond * 3L) / 4L);
-        if (targetBitrate > Integer.MAX_VALUE) {
-            targetBitrate = Integer.MAX_VALUE;
-        }
-        recorder.setVideoCodec(avcodec.AV_CODEC_ID_H264);
-        recorder.setFormat("mp4");
-        recorder.setFrameRate(fps);
-        recorder.setPixelFormat(avutil.AV_PIX_FMT_YUV420P);
-        recorder.setVideoBitrate((int) targetBitrate);
-        recorder.setVideoOption("crf", "18");
-        recorder.setVideoOption("preset", "medium");
-        recorder.setVideoOption("profile", "high");
-        recorder.setVideoOption("tune", "animation");
-        recorder.setVideoOption("movflags", "+faststart");
-        logInfo(
-            "Video encoder configured at ~" + (targetBitrate / 1000) + " kbps"
-        );
-        recorder.start();
-        return recorder;
-    }
-
-    private void recordFrame(FFmpegFrameRecorder recorder, Pixmap pixmap)
-        throws Exception {
-        if (frameConverter == null) {
-            frameConverter = new Java2DFrameConverter();
-        }
-        recorder.record(frameConverter.convert(pixmapToBufferedImage(pixmap)));
-    }
-
-    private BufferedImage pixmapToBufferedImage(Pixmap pixmap) {
-        BufferedImage image = new BufferedImage(
-            pixmap.getWidth(),
-            pixmap.getHeight(),
-            BufferedImage.TYPE_3BYTE_BGR
-        );
-        byte[] bgr = ((DataBufferByte) image
-                .getRaster()
-                .getDataBuffer()).getData();
-
-        ByteBuffer pixels = pixmap.getPixels().duplicate();
-        pixels.rewind();
-
-        int pixelCount = pixmap.getWidth() * pixmap.getHeight();
-        int dst = 0;
-        for (int i = 0; i < pixelCount; i++) {
-            byte r = pixels.get();
-            byte g = pixels.get();
-            byte b = pixels.get();
-            pixels.get(); // alpha, unused
-
-            bgr[dst++] = b;
-            bgr[dst++] = g;
-            bgr[dst++] = r;
-        }
-
-        return image;
-    }
-
-    private Pixmap renderCurrentFrame() {
-        frameBuffer.begin();
-
-        Gdx.gl.glViewport(0, 0, outputWidth, outputHeight);
-        Gdx.gl.glClearColor(0f, 0f, 0f, 1f);
-        Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
-        Gdx.gl.glDisable(GL20.GL_SCISSOR_TEST);
-
-        batch.setProjectionMatrix(camera.combined);
-        batch.begin();
-        renderer.draw(batch, skeleton);
-        batch.end();
-
-        Pixmap pixmap = captureFrameBuffer(outputWidth, outputHeight);
-        frameBuffer.end();
-
-        Pixmap flipped = flipPixmapVertically(pixmap);
-        pixmap.dispose();
-        return flipped;
-    }
-
-    private void writePixmap(Path path, Pixmap pixmap) {
-        FileHandle handle = Gdx.files.absolute(path.toString());
-        if (handle.parent() != null && !handle.parent().exists()) {
-            handle.parent().mkdirs();
-        }
-        PixmapIO.writePNG(handle, pixmap);
-    }
-
-    private void deleteFrames(Path framesDir) {
-        if (!Files.exists(framesDir)) {
-            return;
-        }
-
-        try {
-            Files.walk(framesDir)
-                .sorted(Comparator.reverseOrder())
-                .forEach(path -> {
-                    try {
-                        Files.deleteIfExists(path);
-                    } catch (IOException ex) {
-                        throw new IllegalStateException(
-                            "Failed to delete frame path: " + path,
-                            ex
-                        );
-                    }
-                });
-        } catch (IOException ex) {
-            throw new IllegalStateException(
-                "Failed to clean frames directory: " + framesDir,
-                ex
-            );
         }
     }
 
@@ -639,7 +331,7 @@ public class App extends ApplicationAdapter {
         skeleton.setSlotsToSetupPose();
     }
 
-    private void advanceAnimation(float delta) {
+    void advanceAnimation(float delta) {
         if (delta > 0f) {
             advanceSkeleton(skeleton, delta);
             if (animationState != null) {
@@ -664,31 +356,6 @@ public class App extends ApplicationAdapter {
                 ex
             );
         }
-    }
-
-    private Pixmap flipPixmapVertically(Pixmap pixmap) {
-        Pixmap flipped = new Pixmap(
-            pixmap.getWidth(),
-            pixmap.getHeight(),
-            pixmap.getFormat()
-        );
-        Pixmap.Blending old = flipped.getBlending();
-        flipped.setBlending(Pixmap.Blending.None);
-        for (int y = 0; y < pixmap.getHeight(); y++) {
-            flipped.drawPixmap(
-                pixmap,
-                0,
-                pixmap.getHeight() - y - 1,
-                pixmap.getWidth(),
-                1,
-                0,
-                y,
-                pixmap.getWidth(),
-                1
-            );
-        }
-        flipped.setBlending(old);
-        return flipped;
     }
 
     private GeometryBounds computeGeometryBounds(Skeleton skeleton) {
@@ -755,26 +422,6 @@ public class App extends ApplicationAdapter {
         if (worldVerticesBuffer.length < required) {
             worldVerticesBuffer = Arrays.copyOf(worldVerticesBuffer, required);
         }
-    }
-
-    private Pixmap captureFrameBuffer(int width, int height) {
-        int amount = width * height * 4;
-        ByteBuffer pixels = BufferUtils.newByteBuffer(amount);
-        Gdx.gl.glFinish();
-        Gdx.gl20.glPixelStorei(GL20.GL_PACK_ALIGNMENT, 1);
-        Gdx.gl20.glReadPixels(
-            0,
-            0,
-            width,
-            height,
-            GL20.GL_RGBA,
-            GL20.GL_UNSIGNED_BYTE,
-            pixels
-        );
-        pixels.rewind();
-        Pixmap pixmap = new Pixmap(width, height, Pixmap.Format.RGBA8888);
-        BufferUtils.copy(pixels, pixmap.getPixels(), amount);
-        return pixmap;
     }
 
     private void applyWorldTransform(Skeleton target) {

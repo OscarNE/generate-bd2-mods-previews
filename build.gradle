@@ -39,13 +39,13 @@ tasks.withType(JavaCompile).configureEach {
 
 def prebuiltClassesDir = layout.projectDirectory.dir('bin/main')
 
-tasks.register('syncPrebuiltClasses', Sync) {
+tasks.register('syncPrebuiltClasses', Copy) {
     onlyIf { prebuiltClassesDir.asFile.exists() }
     from(prebuiltClassesDir)
     into(new File(buildDir, 'classes/java/main'))
 }
 
-tasks.named('classes') {
+tasks.named('compileJava') {
     dependsOn('syncPrebuiltClasses')
 }
 

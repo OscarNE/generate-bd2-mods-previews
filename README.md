@@ -65,6 +65,7 @@ java --enable-native-access=ALL-UNNAMED \
      --video-seconds 5 \
      --fps 30 \
      --video-output preview.mp4 \
+     --video-loop auto \
      --keep-frames
 ```
 
