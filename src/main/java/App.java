@@ -23,6 +23,8 @@ import com.esotericsoftware.spine.attachments.Attachment;
 import com.esotericsoftware.spine.attachments.MeshAttachment;
 import com.esotericsoftware.spine.attachments.RegionAttachment;
 import com.esotericsoftware.spine.utils.TwoColorPolygonBatch;
+import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferByte;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -34,6 +36,10 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Locale;
 import java.util.stream.Stream;
+import org.bytedeco.ffmpeg.global.avcodec;
+import org.bytedeco.ffmpeg.global.avutil;
+import org.bytedeco.javacv.FFmpegFrameRecorder;
+import org.bytedeco.javacv.Java2DFrameConverter;
 
 public class App extends ApplicationAdapter {
 
@@ -99,6 +105,7 @@ public class App extends ApplicationAdapter {
     private int outputHeight;
     private boolean exported;
     private float[] worldVerticesBuffer = new float[64];
+    private Java2DFrameConverter frameConverter;
 
     public App(CliArguments arguments) {
         this.arguments = arguments;
@@ -203,6 +210,7 @@ public class App extends ApplicationAdapter {
         batch = new TwoColorPolygonBatch();
         renderer = new SkeletonRenderer();
         renderer.setPremultipliedAlpha(false);
+        frameConverter = new Java2DFrameConverter();
 
         frameBuffer = new FrameBuffer(
             Pixmap.Format.RGBA8888,
@@ -259,35 +267,143 @@ public class App extends ApplicationAdapter {
             preview.dispose();
         }
 
-        deleteFrames(framesDir);
-
-        try {
-            Files.createDirectories(framesDir);
-        } catch (IOException e) {
-            throw new IllegalStateException(
-                "Unable to create frames directory: " + framesDir,
-                e
-            );
+        if (arguments.keepFrames()) {
+            deleteFrames(framesDir);
+            try {
+                Files.createDirectories(framesDir);
+            } catch (IOException e) {
+                throw new IllegalStateException(
+                    "Unable to create frames directory: " + framesDir,
+                    e
+                );
+            }
+        } else {
+            deleteFrames(framesDir);
         }
 
-        for (int i = 0; i < frames; i++) {
-            Pixmap framePixmap = renderCurrentFrame();
-            Path framePath = framesDir.resolve(
-                String.format(Locale.ROOT, "frame_%05d.png", i)
+        FFmpegFrameRecorder recorder = null;
+        Exception encodeError = null;
+        try {
+            recorder = startRecorder(
+                arguments.videoOutput(),
+                outputWidth,
+                outputHeight,
+                arguments.fps()
             );
-            writePixmap(framePath, framePixmap);
-            framePixmap.dispose();
+            for (int i = 0; i < frames; i++) {
+                Pixmap framePixmap = renderCurrentFrame();
 
-            if (i < frames - 1) {
-                advanceAnimation(step);
+                if (arguments.keepFrames()) {
+                    Path framePath = framesDir.resolve(
+                        String.format(Locale.ROOT, "frame_%05d.png", i)
+                    );
+                    writePixmap(framePath, framePixmap);
+                }
+
+                recordFrame(recorder, framePixmap);
+                framePixmap.dispose();
+
+                if (i < frames - 1) {
+                    advanceAnimation(step);
+                }
+            }
+        } catch (Exception ex) {
+            encodeError = ex;
+        } finally {
+            if (recorder != null) {
+                try {
+                    recorder.stop();
+                } catch (Exception stopEx) {
+                    if (encodeError != null) {
+                        encodeError.addSuppressed(stopEx);
+                    } else {
+                        encodeError = stopEx;
+                    }
+                }
+                try {
+                    recorder.release();
+                } catch (Exception releaseEx) {
+                    if (encodeError != null) {
+                        encodeError.addSuppressed(releaseEx);
+                    } else {
+                        encodeError = releaseEx;
+                    }
+                }
             }
         }
 
-        encodeWithFfmpeg(framesDir, arguments.fps(), arguments.videoOutput());
+        if (encodeError != null) {
+            throw new IllegalStateException(
+                "Failed to encode video",
+                encodeError
+            );
+        }
 
         if (!arguments.keepFrames()) {
             deleteFrames(framesDir);
         }
+    }
+
+    private FFmpegFrameRecorder startRecorder(
+        Path output,
+        int width,
+        int height,
+        int fps
+    ) throws Exception {
+        Path parent = output.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+
+        FFmpegFrameRecorder recorder = new FFmpegFrameRecorder(
+            output.toString(),
+            width,
+            height
+        );
+        recorder.setVideoCodec(avcodec.AV_CODEC_ID_H264);
+        recorder.setFormat("mp4");
+        recorder.setFrameRate(fps);
+        recorder.setPixelFormat(avutil.AV_PIX_FMT_YUV420P);
+        recorder.setVideoOption("movflags", "+faststart");
+        recorder.start();
+        return recorder;
+    }
+
+    private void recordFrame(FFmpegFrameRecorder recorder, Pixmap pixmap)
+        throws Exception {
+        if (frameConverter == null) {
+            frameConverter = new Java2DFrameConverter();
+        }
+        recorder.record(frameConverter.convert(pixmapToBufferedImage(pixmap)));
+    }
+
+    private BufferedImage pixmapToBufferedImage(Pixmap pixmap) {
+        BufferedImage image = new BufferedImage(
+            pixmap.getWidth(),
+            pixmap.getHeight(),
+            BufferedImage.TYPE_3BYTE_BGR
+        );
+        byte[] bgr = ((DataBufferByte) image
+                .getRaster()
+                .getDataBuffer()).getData();
+
+        ByteBuffer pixels = pixmap.getPixels().duplicate();
+        pixels.rewind();
+
+        int pixelCount = pixmap.getWidth() * pixmap.getHeight();
+        int dst = 0;
+        for (int i = 0; i < pixelCount; i++) {
+            byte r = pixels.get();
+            byte g = pixels.get();
+            byte b = pixels.get();
+            pixels.get(); // alpha, unused
+
+            bgr[dst++] = b;
+            bgr[dst++] = g;
+            bgr[dst++] = r;
+        }
+
+        return image;
     }
 
     private Pixmap renderCurrentFrame() {
@@ -317,40 +433,6 @@ public class App extends ApplicationAdapter {
             handle.parent().mkdirs();
         }
         PixmapIO.writePNG(handle, pixmap);
-    }
-
-    private void encodeWithFfmpeg(Path framesDir, int fps, Path videoOut) {
-        ProcessBuilder builder = new ProcessBuilder(
-            "ffmpeg",
-            "-y",
-            "-framerate",
-            String.valueOf(fps),
-            "-i",
-            framesDir.resolve("frame_%05d.png").toString(),
-            "-vf",
-            "format=yuv420p",
-            "-movflags",
-            "+faststart",
-            "-r",
-            String.valueOf(fps),
-            videoOut.toString()
-        );
-        builder.inheritIO();
-
-        try {
-            Process process = builder.start();
-            int code = process.waitFor();
-            if (code != 0) {
-                throw new IllegalStateException(
-                    "ffmpeg exited with code " + code
-                );
-            }
-        } catch (IOException ex) {
-            throw new IllegalStateException("ffmpeg failed", ex);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("ffmpeg interrupted", ex);
-        }
     }
 
     private void deleteFrames(Path framesDir) {
