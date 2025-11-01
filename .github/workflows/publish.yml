@@ -1,22 +1,54 @@
 name: publish
+
 on:
   push:
-    tags: ["v0.1.1"]
+    tags: ["v*"] # fires when you push tags from git
+  release:
+    types: [published] # fires when you publish a Release in the UI
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.1.2)"
+        required: false
+        default: ""
+
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "25"
+          java-version: "21"
+
       - uses: gradle/actions/setup-gradle@v3
-      - run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - run: ./gradlew -Pversion="${VERSION}" clean shadowJar publish
+
+      # Resolve version from trigger:
+      # - push tag: GITHUB_REF_NAME like "v0.1.2"
+      # - release:   github.event.release.tag_name
+      # - manual:    inputs.version
+      - name: Compute version
+        id: v
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="v${{ github.event.inputs.version }}"
+          fi
+          TAG="${TAG#v}"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build & publish
+        run: ./gradlew -Pversion="${{ steps.v.outputs.version }}" clean shadowJar publish
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
