@@ -30,6 +30,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
@@ -93,6 +94,24 @@ public class App extends ApplicationAdapter {
         SKELETON_UPDATE_METHOD = updateMethod;
     }
 
+    private static final String LOG_PREFIX = "[create-preview]";
+    private static final String SPINE_RUNTIME_VERSION = "4.1.0";
+
+    private static void logInfo(String message) {
+        System.out.println(LOG_PREFIX + " INFO  " + message);
+    }
+
+    private static void logWarn(String message) {
+        System.out.println(LOG_PREFIX + " WARN  " + message);
+    }
+
+    private static void logError(String message, Throwable error) {
+        System.err.println(LOG_PREFIX + " ERROR " + message);
+        if (error != null) {
+            error.printStackTrace(System.err);
+        }
+    }
+
     private final CliArguments arguments;
     private TextureAtlas atlas;
     private Skeleton skeleton;
@@ -116,12 +135,15 @@ public class App extends ApplicationAdapter {
         FileHandle atlasHandle = Gdx.files.absolute(
             arguments.atlasPath().toString()
         );
+        logInfo("Loading atlas: " + atlasHandle.path());
         FileHandle skeletonHandle = Gdx.files.absolute(
             arguments.skeletonPath().toString()
         );
+        logInfo("Loading skeleton data: " + skeletonHandle.path());
         FileHandle texturesDirHandle = Gdx.files.absolute(
             arguments.textureDirectory().toString()
         );
+        logInfo("Loading textures from: " + texturesDirHandle.path());
         atlas = new TextureAtlas(atlasHandle, texturesDirHandle);
 
         SkeletonData skeletonData = readSkeletonData(
@@ -143,6 +165,13 @@ public class App extends ApplicationAdapter {
         skeleton = new Skeleton(skeletonData);
         applySkin(arguments.skinName(), skeletonData);
         skeleton.setToSetupPose();
+        logInfo(
+            "Skeleton ready with " +
+                skeletonData.getBones().size +
+                " bones and " +
+                skeletonData.getAnimations().size +
+                " animation(s)."
+        );
 
         String selectedAnimation = arguments.animationName();
         if (
@@ -157,6 +186,11 @@ public class App extends ApplicationAdapter {
             animationState = new AnimationState(stateData);
             boolean loop = arguments.videoSeconds() > 0f;
             animationState.setAnimation(0, selectedAnimation, loop);
+            logInfo(
+                "Selected animation: " +
+                    selectedAnimation +
+                    (loop ? " (looping)" : "")
+            );
         }
 
         float initialTime = Math.max(0f, arguments.animationTime());
@@ -190,6 +224,8 @@ public class App extends ApplicationAdapter {
         if ((outputHeight & 1) == 1) {
             outputHeight++;
         }
+
+        logInfo("Render resolution set to " + outputWidth + "x" + outputHeight);
 
         if (geometryBounds.hasGeometry()) {
             float translateX =
@@ -226,6 +262,7 @@ public class App extends ApplicationAdapter {
         }
 
         exported = true;
+        logInfo("Export completed successfully.");
         Gdx.app.exit();
     }
 
@@ -251,6 +288,7 @@ public class App extends ApplicationAdapter {
         Pixmap frame = renderCurrentFrame();
         writePixmap(outputPath, frame);
         frame.dispose();
+        logInfo("Preview image written to " + outputPath);
     }
 
     private void renderVideoSequence() {
@@ -260,6 +298,14 @@ public class App extends ApplicationAdapter {
         );
         float step = 1f / arguments.fps();
         Path framesDir = arguments.framesDir();
+        logInfo(
+            "Producing video preview (" +
+                frames +
+                " frame(s) @ " +
+                arguments.fps() +
+                " fps) -> " +
+                arguments.videoOutput()
+        );
 
         if (arguments.outputPath() != null) {
             Pixmap preview = renderCurrentFrame();
@@ -271,6 +317,7 @@ public class App extends ApplicationAdapter {
             deleteFrames(framesDir);
             try {
                 Files.createDirectories(framesDir);
+                logInfo("Saving intermediate frames under " + framesDir);
             } catch (IOException e) {
                 throw new IllegalStateException(
                     "Unable to create frames directory: " + framesDir,
@@ -279,6 +326,7 @@ public class App extends ApplicationAdapter {
             }
         } else {
             deleteFrames(framesDir);
+            logInfo("Intermediate frames will be discarded after encoding.");
         }
 
         FFmpegFrameRecorder recorder = null;
@@ -333,11 +381,17 @@ public class App extends ApplicationAdapter {
         }
 
         if (encodeError != null) {
+            logError(
+                "Failed to encode video: " + encodeError.getMessage(),
+                encodeError
+            );
             throw new IllegalStateException(
                 "Failed to encode video",
                 encodeError
             );
         }
+
+        logInfo("Video preview written to " + arguments.videoOutput());
 
         if (!arguments.keepFrames()) {
             deleteFrames(framesDir);
@@ -360,11 +414,24 @@ public class App extends ApplicationAdapter {
             width,
             height
         );
+        long pixelsPerSecond = (long) width * height * Math.max(1, fps);
+        long targetBitrate = Math.max(2_000_000L, (pixelsPerSecond * 3L) / 4L);
+        if (targetBitrate > Integer.MAX_VALUE) {
+            targetBitrate = Integer.MAX_VALUE;
+        }
         recorder.setVideoCodec(avcodec.AV_CODEC_ID_H264);
         recorder.setFormat("mp4");
         recorder.setFrameRate(fps);
         recorder.setPixelFormat(avutil.AV_PIX_FMT_YUV420P);
+        recorder.setVideoBitrate((int) targetBitrate);
+        recorder.setVideoOption("crf", "18");
+        recorder.setVideoOption("preset", "medium");
+        recorder.setVideoOption("profile", "high");
+        recorder.setVideoOption("tune", "animation");
         recorder.setVideoOption("movflags", "+faststart");
+        logInfo(
+            "Video encoder configured at ~" + (targetBitrate / 1000) + " kbps"
+        );
         recorder.start();
         return recorder;
     }
@@ -671,14 +738,29 @@ public class App extends ApplicationAdapter {
     private SkeletonData readSkeletonData(Path path, float scale) {
         FileHandle handle = Gdx.files.absolute(path.toString());
         String lower = path.toString().toLowerCase(Locale.ROOT);
-        if (lower.endsWith(".json")) {
-            SkeletonJson json = new SkeletonJson(atlas);
-            json.setScale(scale);
-            return json.readSkeletonData(handle);
+        try {
+            if (lower.endsWith(".json")) {
+                SkeletonJson json = new SkeletonJson(atlas);
+                json.setScale(scale);
+                return json.readSkeletonData(handle);
+            }
+            SkeletonBinary binary = new SkeletonBinary(atlas);
+            binary.setScale(scale);
+            return binary.readSkeletonData(handle);
+        } catch (RuntimeException ex) {
+            String message =
+                "Failed to read skeleton data from " +
+                path +
+                ". Ensure the file was exported for Spine runtime " +
+                SPINE_RUNTIME_VERSION +
+                ".";
+            logError(message, ex);
+            throw new IllegalStateException(message, ex);
         }
-        SkeletonBinary binary = new SkeletonBinary(atlas);
-        binary.setScale(scale);
-        return binary.readSkeletonData(handle);
+    }
+
+    public boolean exportedSuccessfully() {
+        return exported;
     }
 
     public static void main(String[] args) {
@@ -686,7 +768,7 @@ public class App extends ApplicationAdapter {
         try {
             cliArguments = CliArguments.parse(args);
         } catch (IllegalArgumentException ex) {
-            System.err.println(ex.getMessage());
+            logError(ex.getMessage(), null);
             CliArguments.printUsage();
             return;
         }
@@ -706,7 +788,22 @@ public class App extends ApplicationAdapter {
         config.setInitialVisible(false);
         config.disableAudio(true);
 
-        new Lwjgl3Application(new App(cliArguments), config);
+        App app = new App(cliArguments);
+        logInfo(
+            "Starting preview generation for atlas " + cliArguments.atlasPath()
+        );
+        try {
+            new Lwjgl3Application(app, config);
+        } catch (Throwable ex) {
+            logError("Preview generation failed: " + ex.getMessage(), ex);
+            return;
+        }
+
+        if (!app.exportedSuccessfully()) {
+            logWarn("Generator exited before producing an output file.");
+        } else {
+            logInfo("Preview generation finished.");
+        }
     }
 
     public static final class CliArguments {
@@ -1019,7 +1116,15 @@ public class App extends ApplicationAdapter {
         }
 
         private static Path nextPath(String[] args, int index, String flag) {
-            return Paths.get(nextValue(args, index, flag));
+            String value = nextValue(args, index, flag);
+            try {
+                return Paths.get(value);
+            } catch (InvalidPathException ex) {
+                throw new IllegalArgumentException(
+                    flag + " must be a valid filesystem path: " + value,
+                    ex
+                );
+            }
         }
 
         private static String nextValue(String[] args, int index, String flag) {
