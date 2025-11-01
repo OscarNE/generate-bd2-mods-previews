@@ -21,6 +21,7 @@ import com.esotericsoftware.spine.attachments.MeshAttachment;
 import com.esotericsoftware.spine.attachments.RegionAttachment;
 import com.esotericsoftware.spine.utils.TwoColorPolygonBatch;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -495,6 +496,9 @@ public class App extends ApplicationAdapter {
         CliArguments cliArguments;
         try {
             cliArguments = CliArguments.parse(args);
+        } catch (CliArguments.HelpRequested ex) {
+            CliArguments.printUsage(System.out);
+            return;
         } catch (IllegalArgumentException ex) {
             logError(ex.getMessage(), null);
             CliArguments.printUsage();
@@ -543,6 +547,13 @@ public class App extends ApplicationAdapter {
             OFF,
             AUTO,
             CYCLES,
+        }
+
+        static final class HelpRequested extends RuntimeException {
+
+            HelpRequested() {
+                super(null, null, false, false);
+            }
         }
 
         private final Path atlasPath;
@@ -646,6 +657,9 @@ public class App extends ApplicationAdapter {
             for (int i = 0; i < args.length; i++) {
                 String arg = args[i];
                 switch (arg) {
+                    case "--help":
+                    case "-h":
+                        throw new HelpRequested();
                     case "--atlas":
                     case "-a":
                         atlas = nextPath(args, ++i, arg);
@@ -1037,11 +1051,90 @@ public class App extends ApplicationAdapter {
         }
 
         public static void printUsage() {
-            System.err.println(
-                "Usage: java -jar create_preview.jar (--folder path/to/assets | --atlas path/to/atlas.atlas --skeleton path/to/skeleton.{skel|json} --texture path/to/textures.png) " +
-                    "[--output output.png] [--scale value] [--width px] [--height px] [--skin name] [--animation name|path] " +
-                    "[--time seconds] [--video-seconds seconds] [--fps value] [--video-output output.mp4] [--video-loop auto|off|N] [--keep-frames]\n" +
-                    "The --texture argument can point to a single PNG file or a directory containing the atlas images."
+            printUsage(System.err);
+        }
+
+        public static void printUsage(PrintStream out) {
+            out.println("Usage: java -jar create_preview.jar [options]");
+            out.println();
+            out.println(
+                "Required assets (use --folder or provide the atlas, skeleton, and textures):"
+            );
+            out.println(
+                "  --folder PATH             Scan PATH for the first .atlas, .skel/.json, and texture PNG."
+            );
+            out.println(
+                "  --atlas, -a PATH          Spine atlas file (.atlas). Required without --folder."
+            );
+            out.println("  --skeleton, --skel, -s PATH");
+            out.println(
+                "                            Spine skeleton file (.skel or .json). Required without --folder."
+            );
+            out.println("  --texture, --png, -t PATH");
+            out.println(
+                "                            PNG file or directory containing the atlas textures."
+            );
+            out.println();
+            out.println("Image output:");
+            out.println(
+                "  --output, -o PATH         Preview PNG path (default: <atlas>-preview.png)."
+            );
+            out.println(
+                "  --scale VALUE             Scale skeleton data on load (default: 1)."
+            );
+            out.println(
+                "  --width PX                Force output width in pixels."
+            );
+            out.println(
+                "  --height PX               Force output height in pixels."
+            );
+            out.println(
+                "  --min-output PX           Minimum side length for the preview (default: 128)."
+            );
+            out.println();
+            out.println("Animation:");
+            out.println(
+                "  --skin NAME               Apply a skin before rendering."
+            );
+            out.println(
+                "  --animation NAME|PATH     Select an animation by name or load animations from a .skel/.json file."
+            );
+            out.println(
+                "  --time SECONDS            Advance the animation by SECONDS before rendering."
+            );
+            out.println();
+            out.println("Preview window:");
+            out.println(
+                "  --window-width PX         Hidden window width used while rendering (default: 128)."
+            );
+            out.println(
+                "  --window-height PX        Hidden window height used while rendering (default: 128)."
+            );
+            out.println();
+            out.println("Video:");
+            out.println(
+                "  --video-seconds SECONDS   Duration of the encoded video (default: 0 disables video)."
+            );
+            out.println(
+                "  --fps VALUE               Frames per second for the video (default: 30)."
+            );
+            out.println(
+                "  --video-output PATH       MP4 output path (default: derived from --output)."
+            );
+            out.println(
+                "  --video-loop MODE         Loop behaviour: 'auto', 'off', or number of cycles."
+            );
+            out.println(
+                "  --keep-frames             Keep the intermediate PNG frames on disk."
+            );
+            out.println();
+            out.println("General:");
+            out.println(
+                "  --help, -h                Show this help message and exit."
+            );
+            out.println();
+            out.println(
+                "All paths are resolved relative to the current working directory."
             );
         }
 
